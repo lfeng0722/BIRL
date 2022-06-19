@@ -8,17 +8,19 @@ class model(nn.Module):
     def __init__(self,n_input,n_hidden,n_output):
         super(model, self).__init__()
         self.hidden1 = nn.Linear(n_input,n_hidden)
+        self.hidden1.weight.data.normal_(0, 0.1)
         self.hidden2 = nn.Linear(n_hidden,n_hidden)
+        self.hidden2.weight.data.normal_(0, 0.1)
         self.predict = nn.Linear(n_hidden,n_output)
+        self.predict.weight.data.normal_(0, 0.1)
     def forward(self,input):
         input = torch.tensor(input).to(torch.float32)
         out = self.hidden1(input)
         out = F.elu(out)
         out = self.hidden2(out)
         out = F.elu(out)
-        out = self.hidden2(out)
-        out = F.elu(out)
         out =self.predict(out)
+        # out = torch.abs(out)
 
         return out
 

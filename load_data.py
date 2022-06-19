@@ -6,7 +6,7 @@ def load_SVGD_data(num_trajs=None):
 
     # path_head = f"volume/{env}/expert_trajs.npy"
     # path = resource_filename("sbirl", path_head)
-    data = np.load('CartPole-v1/expert_trajs.npy', allow_pickle=True)
+    data = np.load('Acrobot-v1/expert_trajs.npy', allow_pickle=True)
 
 
 
