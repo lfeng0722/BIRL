@@ -48,7 +48,7 @@ class svpg_reinforce(object):
             # time_start = time.time()
             # a = [aa.detach() for aa in const[i]]
             for a in const[i]:
-                agent_policy_grad.append(-2 * self.policies[i](self.sq_pair_q[0][0]) *a)
+                agent_policy_grad.append(-2 * self.alpha* self.policies[i](self.sq_pair_q[0][0]) *a)
             # def process(item):
             #     # print('正在并行for循环')
             #     const = self.policies[i](item[0]).detach()[0][item[1]] - self.Q_network(item[0]).detach()[0][item[1]]
@@ -115,7 +115,7 @@ class svpg_reinforce(object):
                 for _ in range(self.episode):
                     self.train(const_loss)
                 # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]],self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma*self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
-                loss = -VI_obj(self.Q_network,30,batch_sample) +self.alpha * constrain_loss_1
+                loss = -VI_obj(self.Q_network,50,batch_sample) +self.alpha * constrain_loss_1
                 self.optimizers_Q.zero_grad()
                 loss.backward()
                 self.optimizers_Q.step()
@@ -123,10 +123,11 @@ class svpg_reinforce(object):
                 batch_loss+=loss.item()
                 total_loss+=loss.item()
                 number_batch+=1
-                print(batch_loss)
+
             total_loss = total_loss/number_batch
 
             total_reward = 0
+            max_reward = []
             for i, env in enumerate(self.envs):
                 obs = env.reset()
                 game_reward=0
@@ -144,20 +145,21 @@ class svpg_reinforce(object):
                     game_reward+= reward
                     if done:
                         break
-
+                max_reward.append(game_reward)
                 total_reward+=game_reward
             total_reward=total_reward/(self.num_agent)
-            print('iteration %d, loss: %f, reward: %f' % (i_iter, total_loss, total_reward))
+            print(max_reward)
+            print('iteration %d, loss: %f, Mean reward: %f , max reward: %f, std: %f'% (i_iter, total_loss, total_reward, np.max(max_reward), np.std(max_reward)))
 
 
 
 
 if __name__ == '__main__':
-    num_agent = 10
+    num_agent = 100
     alpha = 10
-    sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=6)
+    sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=1)
 
     envs = [gym.make('Acrobot-v1') for _ in range(num_agent)]
     envs = [env.unwrapped for env in envs]
-    test = svpg_reinforce(envs, gamma=0.99, alpha= alpha, sa_pair=sa_pair, sq_pair_q= sq_pair_q, s_dim=s_dim, a_dim=a_dim, learning_rate=1e-3, iter = 30, episode=10, render=True, temperature=10.0)
+    test = svpg_reinforce(envs, gamma=0.99, alpha= alpha, sa_pair=sa_pair, sq_pair_q= sq_pair_q, s_dim=s_dim, a_dim=a_dim, learning_rate=1e-3, iter = 30, episode=20, render=False, temperature=10.0)
     test.run()
