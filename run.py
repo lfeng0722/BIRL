@@ -15,9 +15,10 @@ from multiprocessing.dummy import Pool as ThreadPool
 import torch.utils.data as Data
 
 class svpg_reinforce(object):
-    def __init__(self, envs, gamma, alpha, sa_pair, sq_pair_q, s_dim, a_dim, learning_rate, iter, episode, render, temperature, max_episode_length=300):
+    def __init__(self, envs, gamma, alpha, sa_pair, sq_pair_q, s_dim, a_dim, learning_rate, iter, episode, render, temperature, action_space , max_episode_length=300):
         self.envs = envs
         self.alpha = alpha
+        self.action_s = action_space
         self.iter = iter
         self.sa_pair = sa_pair
         self.sq_pair_q = sq_pair_q
@@ -30,8 +31,8 @@ class svpg_reinforce(object):
         self.render = render
         self.temperature = temperature
         self.eps = np.finfo(np.float32).eps.item()
-        self.policies = [model(self.observation_dim ,64,3) for _ in range(self.num_agent)]
-        self.Q_network = model(self.observation_dim ,64,3)
+        self.policies = [model(self.observation_dim ,64,self.action_s) for _ in range(self.num_agent)]
+        self.Q_network = model(self.observation_dim ,64,self.action_s)
         self.optimizers = [torch.optim.Adam(self.policies[i].parameters(), lr=self.learning_rate) for i in range(self.num_agent)]
         self.optimizers_Q = torch.optim.Adam(self.Q_network.parameters(), lr=self.learning_rate)
         # self.schedule = torch.optim.lr_scheduler.StepLR(self.optimizers_Q, step_size=3, gamma=0.5)
@@ -40,6 +41,7 @@ class svpg_reinforce(object):
 
 
     def train(self, const):
+        #SVGD inference part
         policy_grads = []
         parameters = []
         # print(type(const[1]))
@@ -90,11 +92,7 @@ class svpg_reinforce(object):
     def run(self):
 
         for i_iter in range(self.iter):
-
-
-
-
-            batch_split = func(self.sq_pair_q, 64)
+            batch_split = func(self.sq_pair_q, 64)#batch split
             total_loss = 0
             # for _ in tqdm(range(10)):
             for batch_sample in tqdm(batch_split):
@@ -102,7 +100,7 @@ class svpg_reinforce(object):
                 constrain_loss_2 = 0
                 const_loss = []
                 batch_loss=0
-                for i in range(self.num_agent):
+                for i in range(self.num_agent):#calculate the contraint loss which can be used in SVGD inference and theta update
                     const_loss_1 = []
                     for j in range(len(batch_sample)-1):
                         constrain_loss = self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]]-(self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma * self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
@@ -112,7 +110,7 @@ class svpg_reinforce(object):
                     const_loss.append(const_loss_1)
                 constrain_loss_1= constrain_loss_2 /self.num_agent
 
-                for _ in range(self.episode):
+                for _ in range(self.episode):#run SVGD inference
                     self.train(const_loss)
                 # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]],self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma*self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
                 loss = -VI_obj(self.Q_network,50,batch_sample) +self.alpha * constrain_loss_1
@@ -157,9 +155,10 @@ class svpg_reinforce(object):
 if __name__ == '__main__':
     num_agent = 100
     alpha = 10
+    action_space = 3 #change action space here for each environment
     sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=1)
 
-    envs = [gym.make('Acrobot-v1') for _ in range(num_agent)]
+    envs = [gym.make('Acrobot-v1') for _ in range(num_agent)] #change environment here, and also change the environment in load_data.py
     envs = [env.unwrapped for env in envs]
-    test = svpg_reinforce(envs, gamma=0.99, alpha= alpha, sa_pair=sa_pair, sq_pair_q= sq_pair_q, s_dim=s_dim, a_dim=a_dim, learning_rate=1e-3, iter = 30, episode=20, render=False, temperature=10.0)
+    test = svpg_reinforce(envs, gamma=0.99, alpha= alpha, sa_pair=sa_pair, sq_pair_q= sq_pair_q, s_dim=s_dim, a_dim=a_dim, learning_rate=1e-3, iter = 30, episode=20, render=False, temperature=10.0, action_space = action_space)
     test.run()
