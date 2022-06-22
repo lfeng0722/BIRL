@@ -44,13 +44,20 @@ class svpg_reinforce(object):
         #SVGD inference part
         policy_grads = []
         parameters = []
+        reward_value_1=0
         # print(type(const[1]))
         for i in range(self.num_agent):
             agent_policy_grad = []
+
             # time_start = time.time()
             # a = [aa.detach() for aa in const[i]]
-            for a, j in zip(const[i],batch):
-                agent_policy_grad.append(-2 * self.alpha* self.policies[i](self.sq_pair_q[0][0])*(self.policies[i](j[0]).detach()[0][j[1]]-a))
+            for a, j in zip(const,batch):
+                # time_start = time.time()
+                rv=self.policies[i](j[0]).detach()[0][j[1]]
+                reward_value_1+=rv
+                agent_policy_grad.append(-2 * self.alpha* self.policies[i](self.sq_pair_q[0][0])*(rv-a))
+                # time_end = time.time()
+                # print('花费时间', time_end - time_start)  # 此处单位为秒
             # def process(item):
             #     # print('正在并行for循环')
             #     const = self.policies[i](item[0]).detach()[0][item[1]] - self.Q_network(item[0]).detach()[0][item[1]]
@@ -87,7 +94,7 @@ class svpg_reinforce(object):
             self.optimizers[i].step()
             # del self.policies[i].rewards[:]
             # del self.policies[i].log_probs[:]
-
+        return reward_value_1
 
     def run(self):
 
@@ -101,25 +108,32 @@ class svpg_reinforce(object):
                 constrain_loss_3 = 0
                 const_loss = []
                 batch_loss=0
-                for i in range(self.num_agent):#calculate the contraint loss which can be used in SVGD inference and theta update
-                    const_loss_1 = []
+                Q_value = []
+                # for i in range(self.num_agent):#calculate the contraint loss which can be used in SVGD inference and theta update
+                # const_loss_1 = []
 
-                    for j in range(len(batch_sample)-1):
-                        constrain_loss = (self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma * self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
-                        const_loss_1.append(constrain_loss.item())
-                        # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]])
-                        constrain_loss_2+= constrain_loss
-                    const_loss.append(const_loss_1)
+                for j in range(len(batch_sample)):
+                    # time_start = time.time()
+                    Q_value.append(self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]])
+                    # time_end = time.time()
+                    # print('花费时间', time_end - time_start)  # 此处单位为秒
+                for h in range(len(batch_sample)-1):
+                    constrain_loss = (Q_value[h]-self.gamma * Q_value[h+1])
+                    const_loss.append(constrain_loss.item())
+                    # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]])
+                    constrain_loss_2+= constrain_loss
+                # const_loss.append(const_loss_1)
                 # constrain_loss_1= constrain_loss_2 /self.num_agent
 
                 for _ in range(self.episode):#run SVGD inference
-                    self.train(const_loss,batch_sample)
+                    rwd_f = self.train(const_loss,batch_sample)
                 # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]],self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma*self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
-                for i in range(self.num_agent):
-                    for j in range(len(batch_sample) - 1):
-                        rewardf_loss =self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]]
-                        constrain_loss_3 += rewardf_loss
-                constrain_loss_1 = abs(constrain_loss_3 - constrain_loss_2)
+                # for i in range(self.num_agent):
+                #     for j in range(len(batch_sample) - 1):
+                #         rewardf_loss =self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]]
+                #         constrain_loss_3 += rewardf_loss
+                constrain_loss_4 = rwd_f/self.num_agent
+                constrain_loss_1 = abs(constrain_loss_4 - constrain_loss_2)
 
                 loss = -VI_obj(self.Q_network,50,batch_sample) +self.alpha * constrain_loss_1
                 self.optimizers_Q.zero_grad()
@@ -164,7 +178,7 @@ if __name__ == '__main__':
     num_agent = 20
     alpha = 10
     action_space = 2 #change action space here for each environment
-    sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=3)
+    sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=10)
 
     envs = [gym.make('CartPole-v1') for _ in range(num_agent)] #change environment here, and also change the environment in load_data.py
     envs = [env.unwrapped for env in envs]

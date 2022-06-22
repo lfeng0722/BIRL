@@ -7,11 +7,11 @@ import torch
 def VI_obj(q_value,beta,state_action):
     tool_s = 0
     for i in range(len(state_action)):
-
-        q_t= beta*q_value(state_action[i][0])[0][state_action[i][1]]
+        q=q_value(state_action[i][0])[0]
+        q_t= beta*q[state_action[i][1]]
         # print('q_t', q_t)
         q_t = torch.exp(q_t)
-        q_b= beta * q_value(state_action[i][0])[0]
+        q_b= beta * q
         # print('q_b',q_b)
         # for data in q_b:
         #
