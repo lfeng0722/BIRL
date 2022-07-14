@@ -10,74 +10,66 @@ from loglikelihood import VI_obj
 import gym
 from tqdm import tqdm
 from split import func
+import random
+# import d4rl_atari
+import flappy_bird_gym
 import time
 from multiprocessing.dummy import Pool as ThreadPool
 import torch.utils.data as Data
 
+
+
+
 class svpg_reinforce(object):
-    def __init__(self, envs, gamma, alpha, sa_pair, sq_pair_q, s_dim, a_dim, learning_rate, iter, episode, render, temperature, action_space , max_episode_length=300):
+    def __init__(self, evn, envs, beta,gamma, alpha,  sq_pair_q, s_dim, learning_rate_q, learning_rate, iter, episode, render, temperature, action_space , max_episode_length=500):
+        self.evn = evn
         self.envs = envs
+        self.beta = beta
         self.alpha = alpha
         self.action_s = action_space
         self.iter = iter
-        self.sa_pair = sa_pair
+        self.learning_rate_q = learning_rate_q
         self.sq_pair_q = sq_pair_q
         self.num_agent = len(self.envs)
         self.observation_dim = s_dim
-        self.action_dim = a_dim
+        # self.state_set = state_set
+        # self.action_set = action_set
         self.gamma = gamma
         self.learning_rate = learning_rate
         self.episode = episode
         self.render = render
         self.temperature = temperature
         self.eps = np.finfo(np.float32).eps.item()
-        self.policies = [model(self.observation_dim ,64,self.action_s) for _ in range(self.num_agent)]
-        self.Q_network = model(self.observation_dim ,64,self.action_s)
+        self.policies = [model(self.observation_dim ,64,self.action_s).cuda() for _ in range(self.num_agent)]
+        self.Q_network = model(self.observation_dim ,64,self.action_s).cuda()
         self.optimizers = [torch.optim.Adam(self.policies[i].parameters(), lr=self.learning_rate) for i in range(self.num_agent)]
-        self.optimizers_Q = torch.optim.Adam(self.Q_network.parameters(), lr=self.learning_rate)
+        self.optimizers_Q = torch.optim.Adam(self.Q_network.parameters(), lr=self.learning_rate_q)
         # self.schedule = torch.optim.lr_scheduler.StepLR(self.optimizers_Q, step_size=3, gamma=0.5)
         self.weight_reward = None
         self.max_episode_length = max_episode_length
 
 
-    def train(self, const,batch):
+    def train(self, Q_value,batch,input):
         #SVGD inference part
         policy_grads = []
         parameters = []
         reward_value_1 = 0
-        # print(type(const[1]))
+
         for i in range(self.num_agent):
             agent_policy_grad = []
 
-            # time_start = time.time()
-            # a = [aa.detach() for aa in const[i]]
 
-            for a, j in zip(const,batch):
-                # time_start = time.time()
-                rv=self.policies[i](j[0])[0][j[1]]
-                reward_value_1+=rv.detach()-a
-                agent_policy_grad.append(-2 * self.alpha*rv*(rv.detach()-a.detach()) )#gai
-                # time_end = time.time()
-                # print('花费时间', time_end - time_start)  # 此处单位为秒
-            # def process(item):
-            #     # print('正在并行for循环')
-            #     const = self.policies[i](item[0]).detach()[0][item[1]] - self.Q_network(item[0]).detach()[0][item[1]]
-            #     agent_policy_grad.append(-2*self.policies[i](item[0])[0][item[1]]*const)
-            #     # time.sleep(5)8
-            #
-            # items = self.sq_pair_q
-            #
-            # pool = ThreadPool()
-            # pool.map(process, items)
-            # for sa in self.sq_pair_q:
-            #     const =  self.policies[i](sa[0]).detach()[0][sa[1]] -self.Q_network(sa[0]).detach()[0][sa[1]]
-            #     agent_policy_grad.append(-2*self.policies[i](sa[0])[0][sa[1]]*const)
-            # time_end = time.time()
-            # print('花费时间', time_end - time_start)  # 此处单位为秒
+            reward_value = self.policies[i](input)
+
+            for j in range(len(Q_value)-1):
+                rv=reward_value[j][batch[j][1]]
+                reward_value_1+=torch.normal(rv.detach()-Q_value[j])
+                agent_policy_grad.append(-2 * self.alpha*rv*(rv.detach()-Q_value[j].detach()) )
+
             self.optimizers[i].zero_grad()
 
             policy_grad = torch.cat(agent_policy_grad).sum()
-
+            policy_grad = policy_grad.cuda()
             policy_grad.backward()
             # print(self.policies[i].parameters())
             param_vector, grad_vector = parameters_to_vector(self.policies[i].parameters(), both=True)
@@ -98,90 +90,120 @@ class svpg_reinforce(object):
         return reward_value_1 #gai
 
     def run(self):
-
-        for i_iter in range(self.iter):
-            batch_split = func(self.sq_pair_q, 64)#batch split
+        batch_split = func(self.sq_pair_q, 64)
+        for i_iter in tqdm(range(self.iter)):
+            #batch split
             total_loss = 0
-            # for _ in tqdm(range(10)):
-            for batch_sample in tqdm(batch_split):
-                number_batch = 0
-                constrain_loss_2 = 0
-                constrain_loss_3 = 0
-                const_loss = []
+
+            for batch_sample in batch_split:
+                # number_batch = 0
+                # Q_value=[]
                 batch_loss=0
-                Q_value = []
-                # for i in range(self.num_agent):#calculate the contraint loss which can be used in SVGD inference and theta update
-                # const_loss_1 = []
+                Q_diff=[]
+                tool_s = 0
+                input = torch.cat( [ batch_sample[i][0] for i in range (len(batch_sample)) ], 0 )
+                q_value = self.Q_network(input)
+                # start = time.time()
+                for j in range(len(batch_sample)):
 
-                for j in range(len(batch_sample)): #gai
-                    # time_start = time.time()
-                    Q_value.append(self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]])
-                    # time_end = time.time()
-                    # print('花费时间', time_end - time_start)  # 此处单位为秒
-                for h in range(len(batch_sample)-1): #gai
-                    constrain_loss = (Q_value[h]-self.gamma * Q_value[h+1])
-                    const_loss.append(constrain_loss)
-                    # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]])
-                    # constrain_loss_2+= constrain_loss
-                # const_loss.append(const_loss_1)
-                # constrain_loss_1= constrain_loss_2 /self.num_agent
+                    q = q_value[j]
 
+                    q_t = self.beta * q[batch_sample[j][1]]
+                    q_t = torch.exp(q_t)
+                    q_b = self.beta * q
+                    q_b = torch.exp(q_b)
+                    tool_f = sum(q_b)
+                    st = q_t / tool_f
+                    log_likelihood = torch.log(st)
+                    tool_s += log_likelihood
+
+                    # Q_value.append(q_value)
+                    if j<len(batch_sample)-1:
+                        q_diff = q[batch_sample[j][1]] - self.gamma * q[batch_sample[j + 1][1]]
+                        Q_diff.append(q_diff)
+
+                # end = time.time()
+                # print(end - start)
                 for _ in range(self.episode):#run SVGD inference
-                    rwd_f = self.train(const_loss,batch_sample)
-                # print(self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]],self.Q_network(batch_sample[j][0])[0][batch_sample[j][1]]-self.gamma*self.Q_network(batch_sample[j+1][0])[0][batch_sample[j+1][1]])
-                # for i in range(self.num_agent):
-                #     for j in range(len(batch_sample) - 1):
-                #         rewardf_loss =self.policies[i](batch_sample[j][0]).detach()[0][batch_sample[j][1]]
-                #         constrain_loss_3 += rewardf_loss
-                constrain_loss_1 = rwd_f/self.num_agent #gai
-                # constrain_loss_1 = torch.normal(constrain_loss_4 - constrain_loss_2)
+                    rwd_f = self.train(Q_diff,batch_sample,input)
 
-                loss = -VI_obj(self.Q_network,50,batch_sample) +self.alpha * constrain_loss_1
+                constrain_loss_1 = rwd_f/self.num_agent #gai
+
+
+                loss = -tool_s +self.alpha * constrain_loss_1
+                loss = loss.cuda()
                 self.optimizers_Q.zero_grad()
                 loss.backward()
                 self.optimizers_Q.step()
-                # self.schedule.step()
-                batch_loss+=loss.item()
+
+                # batch_loss+=loss.item()
                 total_loss+=loss.item()
-                number_batch+=1
+                # number_batch+=1
+            print('loss',total_loss)
+        max_reward = []
+        for i, env in enumerate(self.envs):
+            env.seed(520)
+            obs = env.reset()
+            game_reward=0
+            count = 0
+            while count < self.max_episode_length:
+                # if env =='breakout-expert-v0' or env == 'pong-expert-v0':
+                # obs = obs.flatten()
 
-            total_loss = total_loss/number_batch
+                count += 1
+                action_value = self.policies[i](torch.FloatTensor(obs).cuda())
+                action = torch.max(action_value,0)[1].cpu().data.numpy()
+                # print(action)
+                next_obs, reward, done, info = env.step(action)
+                obs = next_obs
+                game_reward+= reward
+                if done:
+                    break
+            max_reward.append(game_reward)
+        best_policy = np.argmax(max_reward)
 
-            total_reward = 0
-            max_reward = []
-            for i, env in enumerate(self.envs):
-                obs = env.reset()
-                game_reward=0
-                count = 0
-                while count < self.max_episode_length:
-                    if self.render:
-                        env.render()
-                    # action = np.argmax(self.policies[i](obs).detach().numpy())
-                    count += 1
-                    action_value = self.policies[i](obs)
-                    action = torch.max(action_value,0)[1].data.numpy()
-                    # print(action)
-                    next_obs, reward, done, info = env.step(action)
-                    obs = next_obs
-                    game_reward+= reward
-                    if done:
-                        break
-                max_reward.append(game_reward)
-                total_reward+=game_reward
-            total_reward=total_reward/(self.num_agent)
-            print(max_reward)
-            print('iteration %d, loss: %f, Mean reward: %f , max reward: %f, std: %f'% (i_iter, total_loss, total_reward, np.max(max_reward), np.std(max_reward)))
+        env = gym.make(self.evn)
+        # env.seed(520)
+        reward_show = []
+        for j in range(10):
+            obs = env.reset()
+            count = 0
+            game_reward = 0
 
+            while count < self.max_episode_length:
+                # if evn =='breakout-expert-v0' or env == 'pong-expert-v0':
+                # obs = obs.flatten()
+                if self.render:
+                    env.render()
+
+                count += 1
+                action_value = self.policies[best_policy](torch.FloatTensor(obs).cuda())
+                action = torch.max(action_value,0)[1].cpu().data.numpy()
+                # print(action)
+                next_obs, reward, done, info = env.step(action)
+                obs = next_obs
+                game_reward+= reward
+                if done:
+                    break
+            reward_show.append(game_reward)
+        env.close()
+
+        print('Mean reward: %f , max reward: %f, min reward: %f, std: %f'% (np.mean(reward_show), np.max(reward_show), np.min(reward_show), np.std(reward_show)))
 
 
 
 if __name__ == '__main__':
-    num_agent = 20
-    alpha = 10
-    action_space = 2 #change action space here for each environment
-    sa_pair, sq_pair_q, a_dim, s_dim = load_SVGD_data(num_trajs=3)
+    num_agent = 1000
+    lambda_c = 10
+    beta = 50
+    action_space = 4 #change action space here for each environment
+    evn = "LunarLander-v2"
+    sq_pair_q, s_dim = load_SVGD_data(evn ,num_trajs=3)
 
-    envs = [gym.make('CartPole-v1') for _ in range(num_agent)] #change environment here, and also change the environment in load_data.py
+    # torch.manual_seed(20)
+    # np.random.seed(20)
+    # random.seed(20)
+    envs = [gym.make(evn) for _ in range(num_agent)] #change environment here, and also change the environment in load_data.py
     envs = [env.unwrapped for env in envs]
-    test = svpg_reinforce(envs, gamma=0.99, alpha= alpha, sa_pair=sa_pair, sq_pair_q= sq_pair_q, s_dim=s_dim, a_dim=a_dim, learning_rate=1e-3, iter = 30, episode=20, render=False, temperature=1.0, action_space = action_space)
+    test = svpg_reinforce(evn, envs, beta, gamma=0.99, alpha= lambda_c, sq_pair_q= sq_pair_q, s_dim=s_dim, learning_rate_q=1e-3, learning_rate=1e-3, iter = 15, episode=10, render=False, temperature=10, action_space = action_space)
     test.run()

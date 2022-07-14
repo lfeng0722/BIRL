@@ -1,11 +1,7 @@
-import time
-from multiprocessing.dummy import Pool as ThreadPool
-def process(item):
-  print('正在并行for循环')
-  print(item)
-  time.sleep(5)
-items = ['apple', 'bananan', 'cake', 'dumpling']
-pool = ThreadPool()
-pool.map(process, items)
-pool.close()
-pool.join()
+import gym
+
+
+env = gym.make('Breakout-ram-v4')
+
+# stacked gray-scale image
+env.reset() # (4, 84, 84)
